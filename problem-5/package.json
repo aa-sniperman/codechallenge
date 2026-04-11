@@ -1,0 +1,31 @@
+{
+  "name": "problem-5-resource-service",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "migration:run": "tsx src/scripts/run-migrations.ts",
+    "migration:revert": "tsx src/scripts/revert-migration.ts",
+    "test:create-resource": "bash scripts/create-resource.sh",
+    "test:list-resources": "bash scripts/list-resources.sh",
+    "test:get-resource": "bash scripts/get-resource.sh",
+    "test:update-resource": "bash scripts/update-resource.sh",
+    "test:delete-resource": "bash scripts/delete-resource.sh"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "pg": "^8.13.1",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.20",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

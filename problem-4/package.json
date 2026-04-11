@@ -1,0 +1,9 @@
+{
+  "name": "codechallenge",
+  "private": true,
+  "scripts": {
+    "problem-4:a": "node for-loop.ts",
+    "problem-4:b": "node recursion.ts",
+    "problem-4:c": "node math-formula.ts"
+  }
+}
