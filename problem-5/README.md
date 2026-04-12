@@ -74,6 +74,7 @@ Services:
 - PostgreSQL: `localhost:5432`
 
 The app container runs TypeORM migrations before the server starts.
+In Docker, it uses the compiled script from `dist`, so it does not depend on `tsx` being installed in the production image.
 
 ## Run Locally
 
