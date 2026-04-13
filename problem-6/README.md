@@ -72,6 +72,7 @@ The source of this diagram is maintained in `problem-6/highlevel.excalidraw.json
 | `Score Service` | Owns the write path for `push action -> update score`. | Keeps idempotency, transactional writes, Redis update, and publish logic in one boundary. |
 | `Leaderboard Service` | Owns the read path for top `K` queries. | Isolates cache-first read logic and fallback-to-Postgres behavior. |
 | `Stream Service` | Owns SSE stream registration and event fanout. | Separates live streaming concerns from request-response APIs and keeps client connections local to each instance. |
+| `Reconcile Worker` | Periodically rebuilds Redis leaderboard state from Postgres and republishes when top `K` changes. | Adds a self-healing path for missed events, Redis eviction, Redis restart, or partial cache update failures. |
 | `Postgres` | Source of truth for actions and aggregated user score. | Provides durability, transactional correctness, and uniqueness guarantees on `action_id`. |
 | `Redis` | Stores hot idempotency data, leaderboard cache, and pub/sub events. | Absorbs burst traffic, enables low-latency reads, and broadcasts write events across all service instances in a horizontally scaled deployment. |
 
