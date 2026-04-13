@@ -29,7 +29,8 @@ The module is responsible for:
 
 - each score-increasing action carries a globally unique `action_id`
 - `action_id` is enforced as unique in the database
-- score delta is trusted from the caller boundary for this exercise
+- `score_delta` is validated server-side and must stay within an allowed positive range, for example `1 <= score_delta <= max_allowed_per_action`
+- `user_id` for score updates is derived only from JWT and must never be accepted from the request body
 - the leaderboard shown to end users is top `K`, where `K=10` by default
 
 ## 2. Architecture Design
@@ -94,6 +95,8 @@ The current version introduces:
 #### Score write path
 
 - request enters through gateway and JWT middleware
+- `user_id` is resolved only from JWT claims, never from request body
+- Score Service validates that `score_delta` is within the server-defined allowed range before touching persistence
 - Score Service checks Redis action cache for fast duplicate detection
 - Score Service executes one database transaction:
   - insert into `actions`
@@ -223,24 +226,26 @@ This flow must remain correct under duplicate requests and under burst traffic.
 ### 4.2 End-to-end execution flow
 
 1. Client sends `POST /v1/actions/complete` with JWT and action payload.
-   Critical: identity is derived only from JWT, never from request body.
+   Critical: identity is derived only from JWT, never from request body, and the client must not submit `user_id`.
 2. API Gateway applies coarse rate limiting and forwards the request through JWT middleware.
    Critical: invalid or missing JWT must be rejected before touching Redis or Postgres.
-3. Score Service checks Redis cached action state for fast duplicate detection.
+3. Score Service validates `score_delta` against the server-defined allowed range.
+   Critical: the server must not trust client-provided score bounds.
+4. Score Service checks Redis cached action state for fast duplicate detection.
    Critical: this is only a performance optimization, not the final correctness guard.
-4. Score Service executes one Postgres transaction:
+5. Score Service executes one Postgres transaction:
    - insert `actions`
    - update `scores`
    Critical: `UNIQUE(action_id)` is the final duplicate-prevention mechanism.
-5. After commit, Score Service updates Redis leaderboard structures.
+6. After commit, Score Service updates Redis leaderboard structures.
    Critical: Redis update and publish are post-commit side effects.
-6. Score Service compares the updated user's rank before and after the Redis update.
+7. Score Service compares the updated user's rank before and after the Redis update.
    Critical: if the user remains outside top `K`, no SSE event is required.
-7. If top `K` is affected, Score Service publishes `leaderboard.changed` through Redis pub/sub.
-8. Redis pub/sub broadcasts the event to all service instances subscribed to the channel.
-9. Each Stream Service instance re-reads the latest top `K` from Redis.
-10. Each Stream Service instance pushes an SSE update to the clients currently connected to that instance.
-11. Independently, a reconciliation worker periodically rebuilds Redis state from Postgres and compares old top `K` with rebuilt top `K`.
+8. If top `K` is affected, Score Service publishes `leaderboard.changed` through Redis pub/sub.
+9. Redis pub/sub broadcasts the event to all service instances subscribed to the channel.
+10. Each Stream Service instance re-reads the latest top `K` from Redis.
+11. Each Stream Service instance pushes an SSE update to the clients currently connected to that instance.
+12. Independently, a reconciliation worker periodically rebuilds Redis state from Postgres and compares old top `K` with rebuilt top `K`.
    Critical: this is the recovery path for missed events, Redis eviction, or partial cache update failures.
 
 The leaderboard read endpoint and SSE stream endpoint are public in this design. Only the score update endpoint requires JWT authentication.
@@ -333,6 +338,11 @@ Request body:
 }
 ```
 
+Request rules:
+
+- `user_id` must not be accepted in the request body; identity is resolved only from JWT
+- `score_delta` must be validated server-side and rejected if it falls outside the allowed range, for example `1 <= score_delta <= max_allowed_per_action`
+
 Success response:
 
 ```json
@@ -365,6 +375,7 @@ Behavior note:
 Error cases:
 
 - `401 Unauthorized`: invalid or missing JWT
+- `400 Bad Request`: invalid payload or `score_delta` outside the allowed range
 - `429 Too Many Requests`: gateway rate limiting
 - `500 Internal Server Error`: unexpected processing failure
 
@@ -446,7 +457,35 @@ Payload example:
 
 This payload should be treated as a transient cross-instance propagation event, not as the long-term source of truth.
 
-## 6. Further Improvement And Engineering Awareness
+## 6. Security Handling Analysis
+
+This section explains how the current design addresses the main security concerns that are in scope for this POC.
+
+### 6.1 Preventing unauthorized score updates
+
+- the write endpoint requires a valid JWT before the request can reach Redis or Postgres
+- `user_id` is derived only from JWT claims and must never be accepted from the request body
+- this prevents an anonymous caller from submitting score updates and prevents an authenticated caller from crediting score directly to another user by spoofing `user_id`
+
+### 6.2 Preventing basic client-side score tampering
+
+- `score_delta` is validated server-side against an allowed positive range, for example `1 <= score_delta <= max_allowed_per_action`
+- the server does not trust the client to decide valid score bounds
+- this is a basic POC guardrail against arbitrary large score submissions from a manipulated client
+
+### 6.3 Preventing duplicate credit and replay abuse
+
+- `action_id` is used as the idempotency key for score-increasing actions
+- Redis cached action state can short-circuit common retries, but Postgres `UNIQUE(action_id)` is the final correctness guard
+- this prevents duplicate requests, retry storms, or concurrent replays from increasing the same action score multiple times
+
+### 6.4 Limitation of the current POC security model
+
+- this design does not verify whether the underlying business action itself is legitimate
+- anti-cheat proof systems, server-issued completion receipts, or external action verification are intentionally out of scope
+- as a result, the current POC protects against unauthenticated writes, `user_id` spoofing, duplicate credit, and oversized score submissions beyond allowed bounds, but it is not a full fraud-prevention design
+
+## 7. Further Improvement And Engineering Awareness
 
 These notes are not mandatory for the first implementation, but they should guide engineering decisions.
 
